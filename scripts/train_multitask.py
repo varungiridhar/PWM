@@ -27,6 +27,7 @@ from glob import glob
 import pandas as pd
 
 from IPython.core import ultratb
+from termcolor import colored
 
 sys.excepthook = ultratb.FormattedTB(mode="Plain", color_scheme="Neutral", call_pdb=1)
 
@@ -43,18 +44,18 @@ def create_wandb_run(wandb_cfg, job_config, run_id=None):
         # Multirun config
         job_id = HydraConfig().get().job.num
         name = f"{alg_name}_{task}_sweep_{job_config['general']['seed']}"
-        notes = wandb_cfg.get("notes", None)
+        # notes = wandb_cfg.get("notes", None)
     except:
         # Normal (singular) run config
         name = f"{alg_name}_{task}"
-        notes = wandb_cfg["notes"]  # force user to make notes
+        # notes = wandb_cfg["notes"]  # force user to make notes
     return wandb.init(
         project=wandb_cfg.project,
         config=job_config,
-        group=wandb_cfg.group,
+        # group=wandb_cfg.groups,
         entity=wandb_cfg.entity,
         name=name,
-        notes=notes,
+        # notes=notes,
         id=run_id,
         resume=run_id is not None,
     )
@@ -256,8 +257,8 @@ def train(cfg: dict):
             f"Expected episode length {td.shape[1]} to match config episode length {cfg.episode_length}, "
             f"please double-check your config."
         )
-        idx = torch.all(td["task"] == task_id, dim=1)
-        td = td[idx]
+        # idx = torch.all(td["task"] == task_id, dim=1)
+        # td = td[idx] # take all tasks in tensor for multi task training instead of a single task
         print(f"Found {len(td)} episodes in file.")
         if td.shape[0] != 0:
             buffer.add_batch(td)
@@ -271,8 +272,8 @@ def train(cfg: dict):
     metrics_log = []
     for i in range(cfg.general.epochs):
         agent.update_lrs(i)
-        obs, act, rew = buffer.sample()
-        train_metrics = agent.update(obs, act, rew, task_ids, cfg.general.finetune_wm)
+        obs, act, rew, task = buffer.sample()
+        train_metrics = agent.update(obs, act, rew, task, cfg.general.finetune_wm)
 
         metrics = {
             "iteration": i,
@@ -280,17 +281,40 @@ def train(cfg: dict):
         }
         metrics.update(train_metrics)
 
-        # Evaluate agent periodically
+        # Evaluate agent periodically on all tasks
         if i % cfg.general.eval_freq == 0:
-            metrics.update(eval(agent, env, task_set, task_id, cfg.general.eval_runs))
-            reward = metrics[f"episode_reward"]
-            print(f"R: {reward:.2f}")
-            if i > 0:
-                agent.save(f"model_{i}", logdir)
+            scores = {task : 0 for task in cfg.tasks}
+            tasks = cfg.tasks if cfg.multitask else [cfg.task]
+            print("Evaluating on tasks: ", tasks)
+            for task_idx, task in enumerate(tasks):
+                if not cfg.multitask:
+                    task_idx = None
+                ep_rewards, ep_successes = [], []
+                for i in range(1):
+                    obs, done, ep_reward, t = env.reset(task_idx=task_idx), False, 0, 0
+                    while not done:
+                        action = agent.act(obs, t0=t==0, task=task_idx)
+                        obs, reward, done, info = env.step(action)
+                        ep_reward += reward
+                        t += 1
+                    ep_rewards.append(ep_reward)
+                    ep_successes.append(info['success'])
+                ep_rewards = np.mean(ep_rewards)
+                ep_successes = np.mean(ep_successes)
+                if cfg.multitask:
+                    scores[task] = ep_rewards
+            if cfg.multitask:
+                # print scores map
+                print("Scores: ", scores)
 
         if i % 100 == 0:
             if "wm_loss" not in metrics:
                 metrics["wm_loss"] = np.nan
+
+            # save all task scores in metrics
+            for task in cfg.tasks:
+                metrics[f"{task}_score"] = scores[task] # for wandb logging
+
             print(
                 "[{:}/{:}]  AL:{:.3f}  VL:{:.3f}  WML:{:.3f}".format(
                     i,

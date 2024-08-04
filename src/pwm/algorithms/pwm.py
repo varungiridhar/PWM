@@ -303,8 +303,7 @@ class PWM:
         # update and normalize obs
         if self.obs_rms:
             obs = self.obs_rms.normalize(obs)
-
-        z = self.wm.encode(obs, task)
+        z = self.wm.encode(obs, task) # TODO: don't we already pass in a task embedding
 
         # keeps track of the current length of the rollout
         rollout_len = torch.zeros((bsz,), device=self.device)
