@@ -316,9 +316,9 @@ class PWM:
 
             # act in environment
             if self.detach:
-                actions = self.actor(z.detach())
+                actions = self.actor(z.detach(), task)
             else:
-                actions = self.actor(z)
+                actions = self.actor(z, task)
 
             actions = torch.tanh(actions)
 
