@@ -90,6 +90,7 @@ class PWM:
             self.num_obs = obs_dim
             self.num_actions = act_dim
         self.latent_dim = latent_dim
+        self.task_dim = 64 # TODO: remove hardcoded dims
         self.device = torch.device(device)
         self.save_data = save_data
 
@@ -315,10 +316,11 @@ class PWM:
                 self.obs_buf[i] = z.clone()
 
             # act in environment
+            z_cond_task = self.wm.task_emb(z, task)
             if self.detach:
-                actions = self.actor(z.detach(), task)
+                actions = self.actor(z_cond_task.detach())
             else:
-                actions = self.actor(z, task)
+                actions = self.actor(z_cond_task)
 
             actions = torch.tanh(actions)
 
@@ -413,9 +415,8 @@ class PWM:
             rollout_len += 1
 
             rew_acc[i + 1, :] = rew_acc[i, :] + gamma * rew
-
-            next_values[i + 1] = self.critic(z).min(dim=0).values.squeeze()
-
+            z_cond_task = self.wm.task_emb(z, task)
+            next_values[i + 1] = self.critic(z_cond_task).min(dim=0).values.squeeze()
             if self.env is not None:
                 # handle terminated environments which stopped for some bad reason
                 # since the reason is bad we set their value to 0
@@ -608,8 +609,21 @@ class PWM:
         else:
             raise NotImplementedError
 
-    def compute_critic_loss(self, batch_sample):
-        predicted_values = self.critic(batch_sample["obs"]).squeeze(-2)
+    def compute_critic_loss(self, batch_sample, task=None):
+        obs = batch_sample["obs"]
+
+        shape = (512, 4, 768 + 64) # TODO: remove hardcoded dims
+        obs_cond = torch.zeros(shape).to(self.device)
+
+        obs = obs.view(512, -1, 768) # TODO: remove hardcoded dims
+        # iterate along second dim:
+        for i in range(obs.shape[1]):
+            obs_cond[:, i, :] = self.wm.task_emb(obs[:, i, :], task)
+
+        # flatten the first two dims
+        obs_cond = obs_cond.view(-1, 768 + 64) # TODO: remove hardcoded dims
+
+        predicted_values = self.critic(obs_cond).squeeze(-2)
         target_values = batch_sample["target_values"]
         critic_loss = ((predicted_values - target_values) ** 2).mean()
         return critic_loss
@@ -1003,7 +1017,7 @@ class PWM:
             for i in range(len(dataset)):
                 batch_sample = dataset[i]
                 self.critic_optimizer.zero_grad()
-                training_critic_loss = self.compute_critic_loss(batch_sample)
+                training_critic_loss = self.compute_critic_loss(batch_sample, task)
                 training_critic_loss.backward()
 
                 # ugly fix for simulation nan problem
@@ -1217,7 +1231,8 @@ class PWM:
     def act(self, obs, t0=False, deterministic=False, task=None):
         obs = torch.tensor(obs, dtype=torch.float32, device=self.device)[None]
         z = self.wm.encode(obs, task)
-        a = self.actor(z, deterministic)
+        z_cond_task = self.wm.task_emb(z, task)
+        a = self.actor(z_cond_task, deterministic)
         return torch.tanh(a).cpu().detach().flatten()
 
     def update_lrs(self, epoch):
