@@ -41,7 +41,7 @@ class ActorDeterministicMLP(nn.Module):
         self.action_dim = action_dim
         self.obs_dim = obs_dim
 
-    def forward(self, observations, task, deterministic=False):
+    def forward(self, observations, deterministic=False):
         return self.actor(observations)
 
 
@@ -89,8 +89,6 @@ class ActorStochasticMLP(nn.Module):
         for param in self.parameters():
             param.data *= init_gain
 
-        num_tasks = 30 # TODO: hardcoded for now
-        self._task_emb = nn.Embedding(num_tasks, self.task_dim, max_norm=1) # TODO: create only when in multitask mode
 
     def get_logstd(self):
         return self.logstd
@@ -98,10 +96,7 @@ class ActorStochasticMLP(nn.Module):
     def clamp_std(self):
         self.logstd.data = torch.clamp(self.logstd.data, self.min_logstd)
 
-    def forward(self, obs, task, deterministic=False):
-        # for multitask
-        obs = self.task_emb(obs, task)
-        
+    def forward(self, obs, deterministic=False):        
         self.clamp_std()
         mu = self.mu_net(obs)
 
@@ -123,8 +118,7 @@ class ActorStochasticMLP(nn.Module):
 
         return sample, dist.log_prob(sample)
 
-    def forward_with_dist(self, obs, task, deterministic=False):
-        obs = self.task_emb(obs, task)
+    def forward_with_dist(self, obs, deterministic=False):
         mu = self.mu_net(obs)
         std = self.logstd.exp()
 
@@ -142,18 +136,3 @@ class ActorStochasticMLP(nn.Module):
         dist = Normal(mu, std)
 
         return dist.log_prob(actions)
-    def task_emb(self, x, task):
-        
-        """
-        Continuous task embedding for multi-task experiments.
-        Retrieves the task embedding for a given task ID `task`
-        and concatenates it to the input `x`.
-        """
-        if isinstance(task, int):
-            task = torch.tensor([task], device=x.device)
-        emb = self._task_emb(task.long())
-        if x.ndim == 3:
-            emb = emb.unsqueeze(0).repeat(x.shape[0], 1, 1)
-        elif emb.shape[0] == 1:
-            emb = emb.repeat(x.shape[0], 1)
-        return torch.cat([x, emb], dim=-1)

@@ -15,7 +15,9 @@ class CriticMLP(nn.Module):
     ):
         super(CriticMLP, self).__init__()
 
-        self.layer_dims = [obs_dim] + units + [1]
+        self.task_dim = 64
+
+        self.layer_dims = [obs_dim + self.task_dim] + units + [1]
 
         if isinstance(activation_class, str):
             activation_class = eval(activation_class)
@@ -55,7 +57,8 @@ class DoubleCriticMLP(nn.Module):
     ):
         super(DoubleCriticMLP, self).__init__()
 
-        self.layer_dims = [obs_dim] + units + [1]
+        self.task_dim = 64
+        self.layer_dims = [obs_dim + self.task_dim] + units + [1]
 
         if isinstance(activation_class, str):
             activation_class = eval(activation_class)
